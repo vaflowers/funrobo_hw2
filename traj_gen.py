@@ -140,7 +140,6 @@ class QuinticPolynomial():
         b = np.vstack([
             q0,
             qd0,
-            qdd0,
             qf,
             qdf,
             qddf
@@ -177,57 +176,46 @@ class QuinticPolynomial():
 
 
 class Trapezoidal():
-    """
-    Computes trapezoidal profile trajectories.
-    """
-
+    """Symmetric trapezoidal velocity: accel, cruise, decel."""
     def __init__(self, ndof=None):
-        """
-        Initialize the trajectory generator.
-        """
         self.ndof = ndof
 
-    
-    def solve(self, q0, qf, qd0, qdf, T, vel=None):
-    
-        self._q0 = np.asarray(q0, dtype=float)
-        self._qf = np.asarray(qf, dtype=float)
+    def solve(self, q0, qf, qd0, qdf, T, qdd0=None, qddf=None, V=None):
+        self._q0 = np.asarray(q0, dtype=float).reshape(-1)
+        self._qf = np.asarray(qf, dtype=float).reshape(-1)
         self._tf = float(T)
-        tf = float(T)
-        
-        distance = self._qf - self._q0
-        vel = 1.5 * distance / tf if vel is None else np.broadcast_to(np.asarray(vel, float), distance.shape)
-        self._vel = vel
-        self._tb = (self._q0 - self._qf + vel*tf) / vel
-        self._a = vel/self._tb
+        tf = self._tf
+        dq = self._qf - self._q0
+
+        V = 1.5 * dq / tf if V is None else np.broadcast_to(np.asarray(V, float), dq.shape)
+        self._V = V
+        self._tb = (self._q0 - self._qf + V * tf) / V
+        self._alpha = V / self._tb
         self.ndof = self._q0.size
 
     def generate(self, t0=0, tf=0, nsteps=100):
-
         t = np.linspace(t0, tf, nsteps)
         X = np.zeros((self.ndof, 3, nsteps))
         tf = self._tf
-        for i in range(self.ndof): # iterate through all DOFs
-            q0i = self._q0[i]
-            qfi = self._qf[i]
-            tbi = self._tb[i]
-            ai = self._a[i]
+        for i in range(self.ndof):
+            q0i, qfi = self._q0[i], self._qf[i]
+            Vi, tbi, ai = self._V[i], self._tb[i], self._alpha[i]
 
-            accel = t <= tbi
-            X[i, 0, accel] = q0i +0.5 *ai * t[accel]**2
-            X[i, 1, accel] = ai * t[accel]
-            X[i, 2, accel] = ai
+            m1 = t <= tbi
+            m3 = t > tf - tbi
+            m2 = ~(m1 | m3)
 
-            decel = t >= (tf - tbi)
-            X[i, 0, decel] = qfi =- 0.5 * ai * tf**2 + ai * tf * t[decel] - 0.5 * ai * t[decel]**2
-            X[i, 1, decel] = ai * (tf - t[decel])
-            X[i, 2, decel] = -ai
-            
+            X[i, 0, m1] = q0i + 0.5 * ai * t[m1] ** 2
+            X[i, 1, m1] = ai * t[m1]
+            X[i, 2, m1] = ai
 
-            cruise = ~(accel | decel)
-            X[i, 0, cruise] = q0i + self._vel[i] * (t[cruise] - tbi) + 0.5 * ai * tbi**2
-            X[i, 1, cruise] = self._vel[i]
-            X[i, 2, cruise] = 0
+            X[i, 0, m2] = (qfi + q0i - Vi * tf) / 2 + Vi * t[m2]
+            X[i, 1, m2] = Vi
+            X[i, 2, m2] = 0
+
+            X[i, 0, m3] = qfi - 0.5 * ai * tf**2 + ai * tf * t[m3] - 0.5 * ai * t[m3] ** 2
+            X[i, 1, m3] = ai * (tf - t[m3])
+            X[i, 2, m3] = -ai
 
         return t, X
 
